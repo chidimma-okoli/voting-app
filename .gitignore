@@ -1,6 +1,29 @@
-*.pyc
-project.lock.json
-bin/
-obj/
-.vs/
-node_modules/
+# Trivy scan reports and generated SBOMs
+trivy-vote-*.json
+trivy-vote-*.txt
+vote-sbom.json
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Python generated files
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+
+# Local virtual environments
+.venv/
+venv/
+
+# Local editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs and temporary files
+*.log
+tmp/

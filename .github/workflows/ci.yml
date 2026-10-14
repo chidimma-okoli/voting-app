@@ -1,0 +1,136 @@
+name: Voting App CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-scan:
+    name: Build and scan ${{ matrix.service }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: vote
+            context: ./vote
+            dockerfile: ./vote/Dockerfile
+            target: final
+            image: ghcr.io/chidimma-okoli/voting-app-vote
+
+          - service: result
+            context: ./result
+            dockerfile: ./result/Dockerfile
+            image: ghcr.io/chidimma-okoli/voting-app-result
+
+          - service: worker
+            context: ./worker
+            dockerfile: ./worker/Dockerfile
+            image: ghcr.io/chidimma-okoli/voting-app-worker
+
+    steps:
+      - name: Check out source code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Vote image
+        if: matrix.service == 'vote'
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          target: final
+          load: true
+          tags: ${{ matrix.image }}:${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+      - name: Build Result and Worker images
+        if: matrix.service != 'vote'
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          load: true
+          tags: ${{ matrix.image }}:${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@v0.2.6
+        with:
+          version: v0.75.0
+
+      - name: Scan image for HIGH and CRITICAL vulnerabilities
+        run: |
+          trivy image \
+            --ignore-unfixed \
+            --severity HIGH,CRITICAL \
+            --exit-code 1 \
+            "${{ matrix.image }}:${{ github.sha }}"
+
+      - name: Save scanned image
+        run: |
+          docker save \
+            "${{ matrix.image }}:${{ github.sha }}" \
+            -o "${{ matrix.service }}.tar"
+
+      - name: Upload scanned image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-${{ matrix.service }}
+          path: ${{ matrix.service }}.tar
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish approved images to GHCR
+    runs-on: ubuntu-latest
+    needs: build-and-scan
+
+    # Only publish after every matrix build and scan passes.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Download scanned image artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: image-*
+          path: /tmp/scanned-images
+          merge-multiple: true
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Load and publish scanned images
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          for service in vote result worker; do
+            echo "Loading scanned image: ${service}"
+            docker load -i "/tmp/scanned-images/${service}.tar"
+          done
+
+          docker push "ghcr.io/chidimma-okoli/voting-app-vote:${IMAGE_TAG}"
+          docker push "ghcr.io/chidimma-okoli/voting-app-result:${IMAGE_TAG}"
+          docker push "ghcr.io/chidimma-okoli/voting-app-worker:${IMAGE_TAG}"
