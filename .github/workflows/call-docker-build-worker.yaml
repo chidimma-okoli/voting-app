@@ -53,7 +53,7 @@ jobs:
       image-names: |
         image-names: |
           ghcr.io/chidimma-okoli/voting-app-worker
-          YOUR_DOCKERHUB_USERNAME/voting-app-worker
+          ${{ secrets.DOCKERHUB_USERNAME }}/voting-app-worker
       
       ### REQUIRED set rules for tagging images, based on special action syntax:
       ### https://github.com/docker/metadata-action#tags-input
