@@ -1,0 +1,231 @@
+
+name: Docker Build and Push
+
+on:
+  workflow_call:
+    inputs:
+      ghcr-enable:
+        description: Publish images to GitHub Container Registry
+        required: false
+        type: boolean
+        default: true
+
+      comment-enable:
+        description: Create a pull request comment
+        required: false
+        type: boolean
+        default: false
+
+      context:
+        description: Docker build context
+        required: false
+        type: string
+        default: .
+
+      file:
+        description: Dockerfile path relative to the build context
+        required: false
+        type: string
+        default: ""
+
+      target:
+        description: Docker build target
+        required: false
+        type: string
+        default: ""
+
+      platforms:
+        description: Target platforms
+        required: false
+        type: string
+        default: linux/amd64
+
+      image-names:
+        description: GHCR image name
+        required: false
+        type: string
+        default: ghcr.io/${{ github.repository }}
+
+      tag-rules:
+        description: Docker metadata tag rules
+        required: false
+        type: string
+        default: |
+          type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+          type=sha,format=long
+          type=ref,event=pr
+          type=raw,value=gha-${{ github.run_id }}
+
+      flavor-rules:
+        description: Docker metadata flavor rules
+        required: false
+        type: string
+        default: |
+          latest=false
+
+    outputs:
+      ghcr-tag:
+        description: Unique run-based tag
+        value: ${{ jobs.build-image.outputs.ghcr-tag }}
+
+permissions:
+  contents: read
+  packages: write
+  pull-requests: write
+
+jobs:
+  build-image:
+    name: Build, scan and publish
+    runs-on: ubuntu-latest
+
+    outputs:
+      ghcr-tag: ${{ steps.ghcr-tag.outputs.tag }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker metadata
+        id: docker_meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ inputs.image-names }}
+          flavor: ${{ inputs.flavor-rules }}
+          tags: |
+            ${{ inputs.tag-rules }}
+
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@v0.2.6
+        with:
+          version: v0.75.0
+
+      - name: Build and scan all platforms
+        env:
+          PLATFORMS: ${{ inputs.platforms }}
+          CONTEXT: ${{ inputs.context }}
+          DOCKERFILE: ${{ inputs.file }}
+          TARGET: ${{ inputs.target }}
+          IMAGE: ${{ inputs.image-names }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          IMAGE_NAME="$(printf '%s\n' "$IMAGE" | head -n 1)"
+
+          if [[ -z "$DOCKERFILE" ]]; then
+            DOCKERFILE_PATH="$CONTEXT/Dockerfile"
+          elif [[ "$DOCKERFILE" = /* ]]; then
+            DOCKERFILE_PATH="$DOCKERFILE"
+          else
+            DOCKERFILE_PATH="$CONTEXT/$DOCKERFILE"
+          fi
+
+          for platform in ${PLATFORMS//,/ }; do
+            safe_platform="${platform//\//-}"
+            safe_platform="${safe_platform//./-}"
+            scan_tag="scan-${GITHUB_SHA}-${safe_platform}"
+
+            echo "Building $platform"
+
+            build_args=(
+              docker buildx build
+              --platform "$platform"
+              --load
+              --tag "${IMAGE_NAME}:${scan_tag}"
+              --file "$DOCKERFILE_PATH"
+            )
+
+            if [[ -n "$TARGET" ]]; then
+              build_args+=(--target "$TARGET")
+            fi
+
+            "${build_args[@]}" "$CONTEXT"
+
+            echo "Scanning $platform"
+
+            trivy image \
+              --ignore-unfixed \
+              --severity HIGH,CRITICAL \
+              --exit-code 1 \
+              "${IMAGE_NAME}:${scan_tag}"
+          done
+
+          echo "All platform scans passed."
+
+      - name: Login to GHCR
+        if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.ghcr-enable
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish scanned images and multi-platform tags
+        if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.ghcr-enable
+        env:
+          PLATFORMS: ${{ inputs.platforms }}
+          IMAGE: ${{ inputs.image-names }}
+          TAGS: ${{ steps.docker_meta.outputs.tags }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          IMAGE_NAME="$(printf '%s\n' "$IMAGE" | head -n 1)"
+          declare -a staging_refs=()
+
+          # All scans have passed before this step can run.
+          for platform in ${PLATFORMS//,/ }; do
+            safe_platform="${platform//\//-}"
+            safe_platform="${safe_platform//./-}"
+            scan_tag="scan-${GITHUB_SHA}-${safe_platform}"
+            staging_tag="staging-${GITHUB_SHA}-${safe_platform}"
+
+            docker tag \
+              "${IMAGE_NAME}:${scan_tag}" \
+              "${IMAGE_NAME}:${staging_tag}"
+
+            docker push "${IMAGE_NAME}:${staging_tag}"
+            staging_refs+=("${IMAGE_NAME}:${staging_tag}")
+          done
+
+          # Create each requested tag from the scanned platform images.
+          while IFS= read -r final_tag; do
+            [[ -z "$final_tag" ]] && continue
+
+            docker manifest create "$final_tag" "${staging_refs[@]}"
+            docker manifest push "$final_tag"
+          done <<< "$TAGS"
+
+      - name: Find existing pull request comment
+        if: github.event_name == 'pull_request' && inputs.comment-enable
+        uses: peter-evans/find-comment@v3
+        id: fc
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: github-actions[bot]
+          body-includes: Docker image tags built and scanned
+
+      - name: Create or update pull request comment
+        if: github.event_name == 'pull_request' && inputs.comment-enable
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.fc.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            Docker image tags built and scanned:
+
+            ```text
+            ${{ steps.docker_meta.outputs.tags }}
+            ```
+          edit-mode: replace
+
+      - name: Set GHCR run-based tag output
+        id: ghcr-tag
+        shell: bash
+        run: echo "tag=gha-${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
