@@ -1,25 +1,25 @@
-FROM node:18-slim
 
-# add curl for healthcheck
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl tini && \
-    rm -rf /var/lib/apt/lists/*
+# Build stage
+FROM node:22-slim AS builder
 
 WORKDIR /usr/local/app
 
-# have nodemon available for local dev use (file watching)
-RUN npm install -g nodemon
-
 COPY package*.json ./
 
-RUN npm ci && \
- npm cache clean --force && \
- mv /usr/local/app/node_modules /node_modules
+RUN npm ci --omit=dev && \
+    npm cache clean --force
 
 COPY . .
+
+# Runtime stage: minimal Node.js image without npm
+FROM gcr.io/distroless/nodejs22-debian13:nonroot AS runtime
+
+WORKDIR /usr/local/app
+
+COPY --from=builder --chown=nonroot:nonroot /usr/local/app /usr/local/app
+COPY --from=builder --chown=nonroot:nonroot /usr/local/app/node_modules /node_modules
 
 ENV PORT=80
 EXPOSE 80
 
-ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["node", "server.js"]
+CMD ["server.js"]

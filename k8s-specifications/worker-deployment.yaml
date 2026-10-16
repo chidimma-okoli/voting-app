@@ -15,5 +15,8 @@ spec:
         app: worker
     spec:
       containers:
-      - image: dockersamples/examplevotingapp_worker
+      - image: ghcr.io/chidimma-okoli/voting-app-worker:7fced42a63415e48710d77f6b42ec73e0ed8d991
         name: worker
+        ports:
+        - containerPort: 80
+          name: worker

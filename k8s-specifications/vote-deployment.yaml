@@ -15,7 +15,7 @@ spec:
         app: vote
     spec:
       containers:
-      - image: dockersamples/examplevotingapp_vote
+      - image: ghcr.io/chidimma-okoli/voting-app-vote:7fced42a63415e48710d77f6b42ec73e0ed8d991
         name: vote
         ports:
         - containerPort: 80

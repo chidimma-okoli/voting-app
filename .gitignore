@@ -27,3 +27,7 @@ Thumbs.db
 # Logs and temporary files
 *.log
 tmp/
+# Generated dependencies and build output
+result/node_modules/
+worker/obj/
+worker/bin/
