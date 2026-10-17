@@ -39,8 +39,8 @@ RUN apt-get update && \
 WORKDIR /usr/local/app
 
 # Copy application dependencies, excluding build tools
-COPY --from=base /usr/local/lib/python3.11/site-packages/ /tmp/python-packages/
-
+COPY --from=base /usr/local/lib/python3.11/site-packages/ /tmp/python-packages
+COPY --from=base /usr/local/bin/gunicorn /usr/local/bin/gunicorn
 # Remove packaging tools and their bundled metadata
 
 RUN rm -rf \
