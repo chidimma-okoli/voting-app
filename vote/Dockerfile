@@ -1,5 +1,5 @@
 # base defines a base stage that uses the official python runtime base image
-FROM python:3.11-slim AS base
+FROM python:3.11-slim@sha256:cce12316475d7d56d605f76e1d811d0dc4e7227f2d4afd29951521264f504ff8 AS base
 
 # Add curl for healthcheck
 RUN apt-get update && \
@@ -10,9 +10,9 @@ RUN apt-get update && \
 # Update Python packaging tools to address reported vulnerabilities
 RUN python -m pip install --no-cache-dir --upgrade \
     "pip>=26.2.1" \
-    "setuptools>=83.0.0" \
-    "wheel>=0.46.2" \
-    "jaraco.context>=6.1.0"
+    "setuptools>=84.0.0" \
+    "wheel>=0.48.0" \
+    "jaraco.context>=6.1.2"
 
 # Set the application directory
 WORKDIR /usr/local/app
@@ -28,7 +28,7 @@ ENV FLASK_ENV=development
 CMD ["python", "app.py"]
 
 # Clean production runtime stage
-FROM python:3.11-slim AS final
+FROM python:3.11-slim@sha256:cce12316475d7d56d605f76e1d811d0dc4e7227f2d4afd29951521264f504ff8 AS final
 
 # Add curl for healthchecks
 RUN apt-get update && \
@@ -37,8 +37,10 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /usr/local/app
+RUN groupadd --system appuser && \
+    useradd --system --gid appuser --home-dir /nonexistent --shell /usr/sbin/nologin appuser
 
-# Copy application dependencies, excluding build tools
+    # Copy application dependencies, excluding build tools
 COPY --from=base /usr/local/lib/python3.11/site-packages/ /tmp/python-packages
 COPY --from=base /usr/local/bin/gunicorn /usr/local/bin/gunicorn
 # Remove packaging tools and their bundled metadata
@@ -59,7 +61,10 @@ RUN rm -rf \
 
 
 COPY . .
+COPY --chown=appuser:appuser . .
 
-EXPOSE 80
+EXPOSE 8080
 
-CMD ["gunicorn", "app:app", "-b", "0.0.0.0:80", "--log-file", "-", "--access-logfile", "-", "--workers", "4", "--keep-alive", "0"]
+USER appuser
+
+CMD ["gunicorn", "app:app", "-b", "0.0.0.0:8080", "--log-file", "-", "--access-logfile", "-", "--workers", "4", "--keep-alive", "0"]

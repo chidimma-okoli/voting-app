@@ -31,3 +31,12 @@ tmp/
 result/node_modules/
 worker/obj/
 worker/bin/
+# Local Kubernetes executable
+/kubectl
+
+# Terraform generated files
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example

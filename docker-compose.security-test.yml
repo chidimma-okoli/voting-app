@@ -1,0 +1,23 @@
+services:
+  vote:
+    image: voting-app-vote:nonroot-test
+    build: !reset null
+    ports: !reset
+      - "8082:8080"
+    volumes: !reset []
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  result:
+    image: voting-app-result:pin-test
+    build: !reset null
+    ports:
+      - "8081:80"
+
+  worker:
+    image: voting-app-worker:nonroot-test
+    build: !reset null

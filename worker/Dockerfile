@@ -8,7 +8,7 @@
 # docker buildx build --platform "linux/arm64/v8" .
 # Build stage
 # hadolint ignore=DL3029
-FROM --platform=${BUILDPLATFORM} mcr.microsoft.com/dotnet/sdk:8.0 AS build
+FROM --platform=${BUILDPLATFORM} mcr.microsoft.com/dotnet/sdk:8.0@sha256:f7e28a0a3f6f9235929ec19274fd0ddf8534e9159f99fac602ac73304f1ce99f AS build
 
 ARG TARGETPLATFORM
 ARG TARGETARCH
@@ -26,14 +26,16 @@ RUN dotnet publish -c Release -o /app -a $TARGETARCH \
     --self-contained false --no-restore
 
 # Runtime stage
-FROM mcr.microsoft.com/dotnet/runtime:8.0 AS runtime
+FROM mcr.microsoft.com/dotnet/runtime:8.0@sha256:60d11c2be381e7f90b8bd984472dd2432933858aba55087d5936980cf2071d5a AS runtime
 
-USER root
 RUN apt-get update \
     && apt-get upgrade -y \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY --from=build /app .
+RUN useradd --system --uid 10001 --create-home appuser
+COPY --from=build --chown=appuser:appuser /app .
+
+USER appuser
 
 ENTRYPOINT ["dotnet", "Worker.dll"]
