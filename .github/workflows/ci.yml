@@ -1,4 +1,4 @@
-name: Voting App CI
+name: Voting App CI and CD
 
 on:
   push:
@@ -134,3 +134,55 @@ jobs:
           docker push "ghcr.io/chidimma-okoli/voting-app-vote:${IMAGE_TAG}"
           docker push "ghcr.io/chidimma-okoli/voting-app-result:${IMAGE_TAG}"
           docker push "ghcr.io/chidimma-okoli/voting-app-worker:${IMAGE_TAG}"
+
+
+  deploy:
+    name: Deploy to local Kind
+    runs-on: [self-hosted, linux, x64]
+    needs: publish
+
+    # Deploy only after a successful publish on main.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    permissions:
+     contents: read
+
+    steps:
+      - name: Check out source code
+        uses: actions/checkout@v4
+      - name: Verify cluster access
+        run: |
+          kubectl config current-context
+          kubectl get nodes
+
+      - name: Validate Helm chart
+        run: |
+          helm lint helm/voting-app \
+            -f helm/voting-app/values-capstone.yaml
+
+      - name: Deploy SHA-tagged images
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          helm upgrade --install voting-app ./helm/voting-app \
+            --namespace default \
+            --values helm/voting-app/values-capstone.yaml \
+            --set-string vote.image.tag="$IMAGE_TAG" \
+            --set-string result.image.tag="$IMAGE_TAG" \
+            --set-string worker.image.tag="$IMAGE_TAG" \
+            --set vote.service.targetPort=8080 \
+            --wait \
+            --timeout 5m
+
+      - name: Verify application rollouts
+        run: |
+          kubectl rollout status deployment/vote \
+            -n default --timeout=180s
+          kubectl rollout status deployment/result \
+            -n default --timeout=180s
+          kubectl rollout status deployment/worker \
+            -n default --timeout=180s
+
+          kubectl get pods -n default

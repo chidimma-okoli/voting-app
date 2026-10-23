@@ -40,3 +40,10 @@ worker/bin/
 *.tfstate.*
 *.tfvars
 !*.tfvars.example
+
+# GitHub Actions self-hosted runner
+/actions-runner/
+
+# Local Trivy scan reports
+/vote-trivy.json
+/vote-trivy-current.json

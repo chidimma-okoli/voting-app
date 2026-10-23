@@ -21,4 +21,4 @@ spec:
           imagePullPolicy: {{ .Values.vote.image.pullPolicy }}
           ports:
             - name: vote
-              containerPort: 80
+              containerPort: 8080
