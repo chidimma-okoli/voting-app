@@ -1,0 +1,6 @@
+NAME     IMAGE
+db       postgres:15-alpine
+redis    redis:alpine
+result   ghcr.io/chidimma-okoli/voting-app-result:d16a1d5ea98d43ce4c3ddaacd5c80a299218c8dd
+vote     ghcr.io/chidimma-okoli/voting-app-vote:d16a1d5ea98d43ce4c3ddaacd5c80a299218c8dd
+worker   ghcr.io/chidimma-okoli/voting-app-worker:d16a1d5ea98d43ce4c3ddaacd5c80a299218c8dd
