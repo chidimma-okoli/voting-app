@@ -50,9 +50,10 @@ jobs:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
           target: final
+          pull: true
+          no-cache: true
           load: true
           tags: ${{ matrix.image }}:${{ github.sha }}
-          cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
       - name: Build Result and Worker images
@@ -61,9 +62,10 @@ jobs:
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
+          pull: true
+          no-cache: true
           load: true
           tags: ${{ matrix.image }}:${{ github.sha }}
-          cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
       - name: Install Trivy
