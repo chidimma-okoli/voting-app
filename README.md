@@ -1,436 +1,386 @@
-# Voting App DevOps Capstone
+# Voting App — DevOps Capstone Project
 
-**Containerization | CI/CD | Container Security | Kubernetes | Helm | Terraform**
+A containerized voting application deployed to a local Kubernetes cluster using Helm, with automated image building, security scanning, publishing, and deployment through GitHub Actions.
 
-A hands-on DevOps project demonstrating how to build, scan, publish, deploy, troubleshoot, and recover a multi-service voting application. The project uses Docker, GitHub Actions, Trivy, GitHub Container Registry (GHCR), Kubernetes with Kind, Helm, and Terraform.
+**Repository:** [chidimma-okoli/voting-app](https://github.com/chidimma-okoli/voting-app)
 
 ## Project Overview
 
-The objective of this capstone was to take a multi-service application through a practical DevOps workflow, from container image builds and security scanning to Kubernetes deployment and release recovery.
+This project demonstrates how I build, test, secure, deploy, and troubleshoot a multi-service application using DevOps tools.
 
-I chose to run the Kubernetes workload locally using Kind rather than incur additional AWS infrastructure costs. The repository also contains Terraform configuration for AWS infrastructure and an S3 remote-state backend.
+The application consists of five services: Vote, Result, Worker, Redis, and PostgreSQL. I used Docker Compose for local execution and a local Kind Kubernetes cluster for the Kubernetes deployment. Helm manages the application release, while GitHub Actions automates the CI/CD workflow.
 
-### What I implemented
-
-- Built container images for Vote, Result, and Worker.
-- Reviewed and improved Dockerfiles with a focus on image security.
-- Scanned images with Trivy.
-- Created a GitHub Actions workflow to build, scan, and publish images.
-- Tagged images using Git commit SHA values.
-- Published scanned images to GHCR.
-- Deployed the application to a local Kind cluster with Helm.
-- Verified Kubernetes pod readiness and application HTTP responses.
-- Investigated a failed Helm rollback and restored a working release.
-- Documented troubleshooting steps and operational lessons.
+The project also explores container image security, deployment failures, Helm release history, and recovery through rollback.
 
 ## Architecture
 
-[[https://drive.google.com/file/d/1kUGcmHyL66RKzctsvpCKm2tv9pExHBMP/view?usp=sharing](https://drive.google.com/file/d/1kUGcmHyL66RKzctsvpCKm2tv9pExHBMP/view?usp=sharing)]
+[View the application architecture diagram](https://drive.google.com/file/d/1kUGcmHyL66RKzctsvpCKm2tv9pExHBMP/view?usp=sharing)
 
-The application data flow is:
+The application follows this flow:
 
-**Vote → Redis → Worker → PostgreSQL → Result**
+1. A user submits a vote through the Vote service.
+2. The vote is placed in Redis.
+3. The Worker reads the vote from Redis and processes it.
+4. The processed vote is stored in PostgreSQL.
+5. The Result service reads the stored data and displays the updated results.
 
-The CI/CD workflow is separate from the application runtime:
-
-**GitHub → GitHub Actions → Docker image builds → Trivy → GHCR → Kubernetes deployment**
-
-See [`docs/architecture.mmd`](docs/architecture.mmd) for the editable Mermaid architecture diagram.
+This separates vote submission, processing, storage, and result display into independent services.
 
 ## Technology Stack
 
-| Technology                | Purpose                                              |
-| ------------------------- | ---------------------------------------------------- |
-| Git and GitHub            | Version control and source repository                |
-| Docker and Docker Compose | Containerization and local application testing       |
-| GitHub Actions            | Automated build, scan, and publishing pipeline       |
-| Trivy                     | Container vulnerability scanning                     |
-| GHCR                      | Container image registry                             |
-| Kubernetes and Kind       | Local orchestration                                  |
-| Helm                      | Kubernetes deployment, release history, and rollback |
-| Terraform                 | Infrastructure as code                               |
-| Redis                     | Vote queue                                           |
-| PostgreSQL                | Persistent vote data during the running environment  |
+| Area | Tools |
+|---|---|
+| Application containerization | Docker, Docker Compose |
+| Container orchestration | Kubernetes, Kind |
+| Deployment and release management | Helm |
+| CI/CD | GitHub Actions |
+| Image security scanning | Trivy |
+| Container registry | GitHub Container Registry (GHCR) |
+| Infrastructure as code | Terraform |
+| Version control | Git, GitHub |
 
-## Repository Structure
+## Local Application and Kubernetes Deployment
 
-```text
-voting-app/
-├── .github/
-│   └── workflows/                  # CI workflow
-├── docs/
-│   └── architecture.mmd            # Architecture diagram source
-├── helm/
-│   └── voting-app/
-│       ├── Chart.yaml
-│       ├── values.yaml
-│       ├── values-capstone.yaml
-│       └── templates/
-├── k8s-specifications/
-│   └── db-deployment.yaml
-├── vote/
-│   └── Dockerfile
-├── result/
-│   └── Dockerfile
-├── worker/
-│   └── Dockerfile
-├── terraform/
-│   ├── main.tf
-│   ├── variables.tf
-│   ├── outputs.tf
-│   ├── versions.tf
-│   ├── backend.tf
-│   └── .terraform.lock.hcl
-├── docker-compose.yml
-├── docker-compose.security-test.yml
-├── docker-stack.yml
-└── README.md
-```
+I first ran the application locally and verified its core voting workflow. I then deployed the services to a local Kind Kubernetes cluster using Helm.
 
-This is the intended documentation structure. Verify the actual committed filenames and chart files before publishing.
+The Kubernetes environment contains deployments for Vote, Result, Worker, Redis, and PostgreSQL. Kubernetes manages the workloads, while Services provide network access between the application components.
 
----
+### Accessing the application
 
-## 1. Containerization and Local Testing
+With the cluster running, use port forwarding to access the services locally.
 
-I used Docker Compose to build and run the multi-service voting application locally.
-
-### Commands used
-
-```bash
-docker compose up --build -d
-docker compose ps
-docker compose logs --tail=100
-```
-
-The application consists of Vote, Result, Worker, Redis, and PostgreSQL.
-
-### Issue encountered: Docker Hub TLS error
-
-During an image pull, Docker returned:
-
-```text
-failed to authorize: failed to fetch oauth token
-remote error: tls: bad record MAC
-```
-
-I tested connectivity to the Docker Hub authentication endpoint:
-
-```bash
-curl -Iv https://auth.docker.io/token
-```
-
-The request completed its TLS handshake and returned HTTP 405 to the HEAD request. This indicated that the endpoint was reachable from that request, although it did not prove Docker's separate image-pull connection was healthy.
-
-I retried the image pull:
-
-```bash
-docker pull python:3.11-slim-bookworm
-```
-
-The image pull succeeded.
-
-**Lesson learned:** A TLS error during an image pull may be a connection issue rather than a Dockerfile defect. Test connectivity and retry before making unnecessary changes to application code.
-
-## 2. Container Security with Trivy
-
-I used Trivy to scan the Vote image for HIGH and CRITICAL vulnerabilities.
-
-### Command used
-
-```bash
-trivy image \
-  --severity HIGH,CRITICAL \
-  --exit-code 1 \
-  --ignore-unfixed \
-  voting-app-vote:nonroot-test
-```
-
-The policy fails the scan when matching HIGH or CRITICAL findings with available fixes are reported.
-
-### Issues encountered
-
-Earlier scans reported operating-system and Python package vulnerabilities. Some operating-system findings had no fixed version available in the scan results. Python packaging dependencies also required attention.
-
-I updated the Vote Dockerfile to upgrade packaging tools in the build stage, removed selected packaging-tool files from the final image, and pinned the Python base image by digest.
-
-I then rebuilt and rescanned the image. The latest local scan was reported as clean under the configured HIGH/CRITICAL policy with `--ignore-unfixed`.
-
-### Security limitations
-
-A clean result under this policy does not mean the image has zero vulnerabilities. The policy excludes unfixed findings and does not report lower-severity findings.
-
-I also learned to distinguish the image I intended to scan from the image actually tagged locally. Rebuilding an image does not automatically prove that a subsequent scan used the newly built image; the image tag and digest should be verified.
-
-### Evidence
-
-Useful evidence includes:
-
-- The Trivy command and scan output.
-- The exact image tag or digest scanned.
-- The Dockerfile changes.
-- The successful GitHub Actions run.
-
-Scan reports should be regenerated when needed and clearly associated with the image version they describe.
-
-## 3. GitHub Actions CI/CD
-
-I created a GitHub Actions workflow named **Voting App CI**.
-
-### Workflow stages
-
-1. Check out the repository.
-2. Configure Docker Buildx.
-3. Build Vote, Result, and Worker images.
-4. Tag images with the Git commit SHA.
-5. Install Trivy.
-6. Scan each image for HIGH and CRITICAL vulnerabilities.
-7. Save scanned images as workflow artifacts.
-8. Publish the images to GHCR after all build-and-scan jobs succeed on a push to `main`.
-
-### Security gate command
-
-```bash
-trivy image \
-  --ignore-unfixed \
-  --severity HIGH,CRITICAL \
-  --exit-code 1 \
-  "$IMAGE"
-```
-
-The `publish` job depends on the `build-and-scan` job. This prevents publishing through that workflow when a required build or scan fails.
-
-### Image naming
-
-```text
-ghcr.io/chidimma-okoli/voting-app-vote:<commit-sha>
-ghcr.io/chidimma-okoli/voting-app-result:<commit-sha>
-ghcr.io/chidimma-okoli/voting-app-worker:<commit-sha>
-```
-
-### Recorded result
-
-My latest reported GitHub Actions run passed all jobs, including publishing to GHCR.
-
-This confirms the reported outcome of that run. It does not mean every possible vulnerability has been eliminated, and it does not mean GitHub Actions directly deploys to my local Kind cluster.
-
-## 4. Kubernetes Deployment with Kind
-
-I used a local Kind cluster to avoid additional AWS running costs.
-
-### Verify the cluster
-
-```bash
-kubectl config current-context
-kubectl get nodes
-```
-
-The cluster node was:
-
-```text
-voting-capstone-control-plane
-```
-
-The node reported `Ready` and Kubernetes version `v1.34.0`.
-
-### Verify pods and services
-
-```bash
-kubectl get pods -n default
-kubectl get services -n default
-```
-
-The application components were:
-
-- `vote`
-- `result`
-- `worker`
-- `redis`
-- `db`
-
-The Vote and Result services were exposed through NodePort services, while Redis and PostgreSQL were internal ClusterIP services.
-
-### Access the Vote application
+**Vote application**
 
 ```bash
 kubectl port-forward service/vote 8080:8080
 ```
 
-Then open:
+Open `http://localhost:8080`.
 
-```text
-http://localhost:8080
-```
+**Result application**
 
-### Access the Result application
-
-In a separate terminal:
+In a separate terminal, run:
 
 ```bash
 kubectl port-forward service/result 8081:8081
 ```
 
-Then open:
+Open `http://localhost:8081`.
 
-```text
-http://localhost:8081
-```
+Keep both port-forwarding terminals open while testing.
 
-Both endpoints returned HTTP 200 OK during the recorded test.
+### Functional validation
 
-**Testing limitation:** An HTTP 200 response confirms that the endpoint responded successfully. A complete functional test should also submit a vote and verify that the result changes.
+I submitted a vote through the Vote page and checked the Result page. The result updated as expected, confirming that the main voting workflow worked across the application services.
 
-## 5. Helm Deployment and Release Management
+The manual test execution recorded six test cases, with six passed and zero failed. These results represent the recorded functional and smoke tests; they do not claim exhaustive testing of every possible scenario.
 
-I used Helm to manage the Kubernetes application through the release `voting-app` in the `default` namespace.
+## CI/CD Pipeline
 
-### Inspect the release
+The GitHub Actions workflow, **Voting App CI and CD**, automates the main delivery process.
 
-```bash
-helm list -n default
-helm status voting-app -n default
-helm history voting-app -n default
-helm get values voting-app -n default
-```
+### 1. Build and scan
 
-The release initially showed revision 2 as deployed.
+The pipeline builds the Vote, Result, and Worker container images using the commit SHA as the image tag.
 
-### Issue encountered: Failed rollback
+Trivy scans the images for HIGH and CRITICAL vulnerabilities. The workflow uses `--ignore-unfixed`, so the security gate fails on HIGH or CRITICAL findings that meet the scanner's applicable criteria after unfixed findings are excluded.
 
-[[https://drive.google.com/file/d/1MuAoE1Rz5SlOGCajDh6FR56_iD2xzRaN/view?usp=sharing](https://drive.google.com/file/d/1MuAoE1Rz5SlOGCajDh6FR56_iD2xzRaN/view?usp=sharing)]
+This makes the security scan part of the build process rather than relying only on manual checks.
 
-I attempted to roll back to revision 1:
+### 2. Publish images
 
-```bash
-helm rollback voting-app 1 -n default --wait
-```
+After the build-and-scan job succeeds, the pipeline publishes the scanned images to GitHub Container Registry.
 
-The command timed out:
+The image tags use the triggering commit SHA to associate the published images with a specific source revision.
 
-```text
-Error: release voting-app failed: context deadline exceeded
-```
+### 3. Deploy to local Kubernetes
 
-The new Vote pod entered `CrashLoopBackOff`, while the other application pods remained running.
+The deployment job runs on a self-hosted Linux runner with access to the local Kind cluster.
 
-### Diagnosis
+It validates the Helm chart, upgrades or installs the release, waits for the deployment to complete, and checks the rollout status of the Vote, Result, and Worker deployments.
 
-I inspected the pod:
+The deployment uses the image tag from the triggering commit rather than a manually hardcoded image version.
 
-```bash
-kubectl describe pod vote-596d68688b-l4tqx -n default
-```
+**Important distinction:** Terraform is part of the project's infrastructure-as-code work, but it did not create the current Kind cluster. The current CI/CD deployment reaches the local cluster through the self-hosted runner.
 
-The container runtime reported:
+## Security and Image Scanning
+
+I included Trivy in the delivery workflow to identify container image vulnerabilities before publishing and deploying images.
+
+During testing, the scan reported HIGH-severity findings in the Debian-based image layer, while the Python section of the scan reported no HIGH or CRITICAL findings. The reported Debian findings were not all immediately fixable through the available package upgrades.
+
+This highlighted an important distinction: a vulnerability report does not automatically mean that a newer, usable package version is available. The scan results must be examined to determine the affected package, installed version, available fix, and appropriate remediation.
+
+The pipeline's use of `--ignore-unfixed` is a deliberate policy choice. It does not mean that the images contain zero vulnerabilities or that every reported finding has been resolved.
+
+## Helm Release Management and Rollback
+
+Helm manages the `voting-app` release in the `default` namespace. Release history makes it possible to inspect previous deployment attempts and recover from a failed upgrade.
+
+During the project, I encountered a failure involving an older Vote image. After investigating the problem, I rolled back to a previously working release and verified that the application recovered. I later deployed a newer, working release.
+
+The current release is Helm revision 5.
+
+[View the rollback demonstration and evidence](https://drive.google.com/file/d/1MuAoE1Rz5SlOGCajDh6FR56_iD2xzRaN/view?usp=sharing)
+
+I also retained snapshots of the Helm history and image information in the repository's evidence directory. These files document the state captured at the time they were created; they should not be treated as live output from the current cluster.
+
+## Issues Encountered and Resolutions
+
+Troubleshooting was an important part of this project. The following examples document the problems encountered, where they occurred, why they happened, and the actions taken.
+
+### 1. Container image pull and network errors
+
+**Where:** During the initial Docker Compose setup and attempts to retrieve container images.
+
+**Issue:** Image retrieval encountered errors, including a Redis TLS handshake timeout and a `tls: bad record MAC` error during an alternative image pull attempt.
+
+**Why it happened:** These errors indicated a problem during the image retrieval or network/TLS communication process. They did not, by themselves, prove that the application code was faulty.
+
+**Resolution and outcome:** I continued working through the image retrieval and startup problems until the required application services could be built or pulled and the local environment could run. The errors were treated as image retrieval and connectivity problems rather than automatically attributed to the application logic.
+
+### 2. Vote container failed because Gunicorn was not found
+
+**Where:** During an earlier Helm rollback to revision 1.
+
+**Issue:** The Vote pod entered `CrashLoopBackOff`. The container reported:
 
 ```text
 exec: "gunicorn": executable file not found in $PATH
 ```
 
-This showed that the older Vote image could not start because the configured executable was missing from its execution path.
+**Why it happened:** The older Vote image referenced by that release could not find the Gunicorn executable through the configured command and runtime environment. The application therefore failed to start correctly.
 
-The image was available locally, but availability did not guarantee that the container could start successfully.
-
-### Recovery
-
-I restored revision 2:
+**Resolution:** I rolled back to Helm revision 2:
 
 ```bash
 helm rollback voting-app 2 -n default --wait --timeout 3m
 ```
 
-Helm reported:
+**Outcome:** The application recovered, and the five service pods returned to a ready state. I did not keep the faulty revision 1 as the active release.
 
-```text
-Rollback was a success! Happy Helming!
-```
+This experience reinforced the importance of checking container startup commands, executable paths, image versions, and rollout status before considering a deployment successful.
 
-I then checked the pods:
+### 3. Helm upgrade timed out
+
+**Where:** During a later Helm upgrade.
+
+**Issue:** Helm revision 3 failed because the upgrade timed out.
+
+**Why it happened:** Kubernetes did not complete the rollout within the configured waiting period. A timeout alone does not identify the underlying cause, so it must be investigated alongside pod status, events, and container logs.
+
+**Resolution:** I returned to the previously working release and subsequently completed a successful deployment.
+
+**Outcome:** Revision 4 recorded the rollback, and revision 5 became the current deployed release. The working application was preserved rather than leaving the failed upgrade active.
+
+### 4. Vulnerabilities remained in the container image scan
+
+**Where:** During Trivy security testing.
+
+**Issue:** Trivy reported HIGH-severity findings in the Debian-based image layer. Attempting to upgrade packages did not automatically eliminate all the reported findings because the available package candidates matched the installed versions.
+
+**Why it happened:** A package upgrade can only remediate a finding when an appropriate fixed version is available and applicable. Repeating the same upgrade does not guarantee that a fix will become available.
+
+**Resolution:** I examined the scan findings and used an explicit CI security gate that checks HIGH and CRITICAL findings while excluding findings classified as unfixed.
+
+**Outcome:** Security scanning became part of the automated pipeline. The policy provides a defined gate, but it does not establish that every vulnerability has been eliminated. Findings without available fixes still require review and follow-up.
+
+### 5. Resource pressure during Helm deployment
+
+**Where:** During the earlier Helm-based Kubernetes work.
+
+**Issue:** A Helm-managed workload was terminated with `OOMKilled`, including an attempt where the memory allocation had been increased.
+
+**Why it happened:** `OOMKilled` means the container was terminated after exceeding its available memory limit or because of memory pressure. Increasing the limit alone may not solve the problem if the workload's memory demand remains too high or another resource constraint exists.
+
+**Resolution and outcome:** This highlighted the need to examine pod status, container termination details, logs, resource requests and limits, and actual workload demand before making further changes. Memory-limit increases should be validated against observed usage rather than treated as a guaranteed fix.
+
+This issue is documented as part of the troubleshooting experience; it should not be interpreted as evidence that the current five-service release is failing.
+
+## Validation and Troubleshooting Commands
+
+The following commands help inspect the deployed application and gather evidence when something goes wrong.
+
+**Check pod readiness**
 
 ```bash
-kubectl get pods -n default
+kubectl get pods
 ```
 
-All five application pods returned to `1/1 Ready`.
-
-I also verified the restored Vote image:
+**Check Services**
 
 ```bash
-kubectl get deployment vote -n default \
-  -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
+kubectl get services
 ```
 
-The image tag was:
+**Inspect Helm release history**
+
+```bash
+helm history voting-app -n default
+```
+
+**Inspect the release status**
+
+```bash
+helm status voting-app -n default
+```
+
+**Check a deployment rollout**
+
+```bash
+kubectl rollout status deployment/vote -n default
+```
+
+**Inspect pod details and events**
+
+```bash
+kubectl describe pod <pod-name> -n default
+```
+
+**Read container logs**
+
+```bash
+kubectl logs <pod-name> -n default
+```
+
+These checks help distinguish between image startup failures, unsuccessful rollouts, application errors, and resource-related terminations.
+
+## Repository Structure
+
+The repository contains the application source, container build files, Kubernetes deployment configuration, CI/CD workflow, and project documentation.
 
 ```text
-eb366d27f3ae90b8fb47691032baec09fa8c72c6
+voting-app/
+├── .github/
+│   └── workflows/
+│       └── ci.yml
+├── docs/
+│   ├── architecture.mmd
+│   └── evidence/
+│       ├── helm-history-before-rollback.txt
+│       └── images-before-rollback.txt
+├── helm/
+│   └── voting-app/
+│       └── values-capstone.yaml
+├── vote/
+├── result/
+├── worker/
+├── docker-compose.yml
+└── README.md
 ```
 
-### Lessons learned
+The exact contents may evolve as the project develops. The evidence files are snapshots captured during troubleshooting, not a replacement for checking the live cluster.
 
-- A successful image pull does not guarantee successful container startup.
-- Pod events can reveal startup errors even when container logs are empty.
-- A failed rollback should be diagnosed before attempting further changes.
-- Helm release history provides a record of deployments and recovery operations.
-- Recovery must be verified by checking both pod readiness and application behavior.
+## Demonstration
 
-The older image that failed to start still requires separate investigation before it should be reused.
+The demonstrations and evidence show the application architecture, deployment behavior, and troubleshooting work.
 
-## 6. Terraform and Infrastructure as Code
+- **Architecture:** [View the architecture diagram](https://drive.google.com/file/d/1kUGcmHyL66RKzctsvpCKm2tv9pExHBMP/view?usp=sharing)
+- **Helm rollback:** [View the rollback demonstration](https://drive.google.com/file/d/1MuAoE1Rz5SlOGCajDh6FR56_iD2xzRaN/view?usp=sharing)
+- **Source code and workflow:** [Open the GitHub repository](https://github.com/chidimma-okoli/voting-app)
 
-The repository contains Terraform source files:
+For a live walkthrough, I demonstrate the vote submission, the corresponding result update, the Kubernetes workloads, the GitHub Actions workflow, and the Helm release history. I also explain the failed release, the reason for the rollback, and the evidence that the application recovered.
 
-- `main.tf`
-- `variables.tf`
-- `outputs.tf`
-- `versions.tf`
-- `backend.tf`
+## Technical Demonstration: Questions and Answers
 
-The backend configuration references an S3 bucket in `eu-west-2` and enables encryption and S3 state locking.
+### 1. What does the application do?
 
-Terraform configuration is maintained separately from the current local Kind workload.
+The application allows users to submit votes and view the results. It uses separate services for voting, vote processing, data storage, and displaying results.
 
-**Important distinction:** The application deployment verified in this project is running on local Kind. The presence of Terraform files and an AWS S3 backend configuration does not mean the current Kubernetes workload was created by Terraform or is running on AWS.
+### 2. Explain the application's architecture.
 
-I excluded generated Terraform state and the local `.terraform` directory from Git tracking. Credentials, private variable files, and state files should not be committed.
+The Vote service accepts a vote and sends it to Redis. The Worker processes the vote and stores it in PostgreSQL. The Result service reads the stored data and displays the results.
 
-## 7. Challenges and Solutions Summary
+### 3. Why did you use Docker?
 
-| Challenge                        | Investigation or solution                                            | Outcome                                                  |
-| -------------------------------- | -------------------------------------------------------------------- | -------------------------------------------------------- |
-| Docker Hub TLS error             | Tested endpoint connectivity and retried image pull                  | Pull succeeded                                           |
-| Container vulnerability findings | Updated packaging dependencies, refined the final image, and rebuilt | Latest reported scan passed the configured policy        |
-| Helm rollback timeout            | Inspected the Vote pod and found the missing `gunicorn` executable   | Root cause of the old image's startup failure identified |
-| Failed application revision      | Rolled back to revision 2                                            | Five pods returned to ready status                       |
-| Avoiding AWS costs               | Used an existing local Kind cluster                                  | Kubernetes deployment continued locally                  |
+Docker packages applications and their dependencies into containers, helping services run consistently across environments.
 
-## 8. Final Validation Checklist
+### 4. Why Kubernetes?
 
-- [x] GitHub Actions build-and-scan workflow reported successful.
-- [x] GHCR publishing reported successful.
-- [x] Local Kind node reported `Ready`.
-- [x] Five application pods returned to `1/1 Ready` after recovery.
-- [x] Vote and Result endpoints returned HTTP 200 OK.
-- [x] Helm rollback to revision 2 completed successfully.
-- [x] Restored Vote image tag verified.
-- [x] Full end-to-end voting and result-update test recorded.
-- [ ] Failed revision's missing `gunicorn` issue corrected and retested.
-- [x] Final architecture diagram and README committed to GitHub.
+Kubernetes manages containerized workloads, maintains the desired number of replicas, and supports service discovery, deployment updates, and recovery when containers fail.
 
-The unchecked items are remaining work, not claims of completed testing.
+### 5. Why did you use Kind instead of a cloud Kubernetes cluster?
 
-## 9. Future Improvements
+Kind runs Kubernetes nodes in Docker containers. It allowed me to practice Kubernetes deployment locally without requiring a paid cloud environment for this capstone.
 
-- Add automated functional tests to CI.
-- Test the complete vote-to-result flow.
-- Investigate and fix the older Vote image's startup configuration.
-- Add health checks and improve observability.
-- Capture a repeatable Helm rollback demonstration.
-- Expand security checks while documenting the scan policy.
-- Improve deployment automation without requiring a paid cloud environment.
+### 6. What is Helm, and why did you use it?
 
-## Author
+Helm manages Kubernetes applications through charts and releases. I used it to organize the application's Kubernetes configuration and manage installations, upgrades, release history, and rollback.
 
-**Chidimma Calista Okoli**
+### 7. How does your CI/CD pipeline work?
 
-DevOps learning portfolio project focused on containerization, CI/CD, container security, Kubernetes, Helm, and infrastructure as code.
+The GitHub Actions workflow builds the Vote, Result, and Worker images, scans them with Trivy, publishes the images to GitHub Container Registry after the build-and-scan job succeeds, and deploys them to the local Kind cluster through a self-hosted runner.
+
+### 8. Why do you tag images with the Git commit SHA?
+
+A commit-SHA tag connects an image to a specific source revision. This makes it easier to identify which version was built and deployed and to investigate deployment problems.
+
+### 9. Why did you use a self-hosted GitHub Actions runner?
+
+The runner has access to my local Kubernetes environment. A standard hosted runner would not automatically have access to the Kind cluster running on my machine.
+
+### 10. How did you test that the application works?
+
+I submitted a vote through the Vote interface and checked the Result interface to confirm that the result updated. My recorded manual test execution contained six test cases, all of which passed.
+
+### 11. What security checks did you implement?
+
+I integrated Trivy into the image build workflow to scan for HIGH and CRITICAL vulnerabilities. The configured policy uses `--ignore-unfixed`, so it excludes findings classified as unfixed. This does not mean that every vulnerability has been eliminated.
+
+### 12. What problem did you encounter during rollback?
+
+An earlier rollback to Helm revision 1 resulted in a Vote container startup failure. The logs reported that `gunicorn` could not be found in the container's executable path.
+
+I rolled back to revision 2, which restored the working application. I subsequently completed a successful deployment, and revision 5 is the current release documented in this project.
+
+### 13. What did the Helm upgrade timeout teach you?
+
+A Helm upgrade can fail when Kubernetes does not complete the rollout within the configured timeout. A timeout is a symptom, not a complete diagnosis. Pod status, events, logs, and rollout details are needed to investigate the underlying cause.
+
+### 14. Does a successful Trivy scan mean the application has no vulnerabilities?
+
+No. The pipeline applies a specific security policy. Because it uses `--ignore-unfixed`, findings without available fixes are excluded from the failure gate. The results must still be reviewed, and remaining risks should be tracked.
+
+### 15. What does `OOMKilled` mean?
+
+It means Kubernetes reports that a container was terminated because it exceeded its available memory limit or was affected by memory pressure. Increasing the memory limit may help, but the workload's actual memory usage and configuration must also be investigated.
+
+### 16. What is the difference between Terraform and Helm in this project?
+
+Terraform is an infrastructure-as-code tool, while Helm manages Kubernetes application releases. In this project, Helm manages the current application release in Kind. Terraform did not create the current Kind cluster.
+
+### 17. How would you troubleshoot a pod that is not starting?
+
+I would first inspect the pod status and events using `kubectl get pods` and `kubectl describe pod`. I would then check the container logs, image configuration, startup command, resource limits, and relevant Kubernetes configuration before changing anything.
+
+### 18. How would you recover from a failed Helm deployment?
+
+I would inspect the Helm history and status, identify a known-good release, and check the reason the new deployment failed. If rollback were appropriate, I would restore the known-good revision and verify the rollout and application functionality afterward.
+
+### 19. What would you improve next?
+
+I would expand automated functional testing, improve vulnerability remediation and reporting, strengthen monitoring and resource visibility, and continue improving infrastructure automation.
+
+### 20. What is the most important lesson you learned?
+
+A successful pipeline does not automatically prove that an application works correctly. The deployed application must be tested, failures must be investigated, and recovery must be verified with evidence.
+
+## What I Learned
+
+This project helped me connect individual DevOps tools into a working delivery workflow. I gained practical experience with:
+
+- Containerizing and running a multi-service application.
+- Deploying workloads to a local Kubernetes cluster.
+- Managing deployments and release history with Helm.
+- Automating image builds, security scans, publishing, and deployment.
+- Investigating image retrieval, container startup, rollout, and resource issues.
+- Using evidence and test results to verify application behavior.
+- Distinguishing a successful deployment from a deployment that merely completed a command.
+
+The most important lesson was that deployment does not end when a pipeline turns green. The application still needs to be checked, failures need to be understood, and recovery needs to be demonstrated.
+
+## Future Improvements
+
+Potential next steps include expanding automated functional tests, strengthening vulnerability remediation and reporting, improving monitoring and resource visibility, and extending infrastructure automation.
+
+These improvements would build on the current working local deployment without overstating what has already been implemented.
