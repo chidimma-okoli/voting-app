@@ -72,6 +72,22 @@ Keep both port-forwarding terminals open while testing.
 ### Functional validation
 
 I submitted a vote through the Vote page and checked the Result page. The result updated as expected, confirming that the main voting workflow worked across the application services.
+=======
+### End-to-End Functional Test
+
+I tested the voting workflow in my local Kind Kubernetes cluster.
+
+1. Opened the Vote application at `http://localhost:8080`.
+2. Submitted a vote.
+3. Opened the Result application at `http://localhost:8081`.
+4. Confirmed that the displayed result reflected the submitted vote.
+
+**Outcome:** The end-to-end voting workflow passed in the tested environment.
+
+Both application endpoints also returned HTTP 200 OK during testing.
+
+**Scope:** This validates the core voting workflow in the tested environment. It does not establish performance under load or long-term reliability.
+>>>>>>> e41ef0011e798c3305361d5e2304e2600e9ea2ff
 
 The manual test execution recorded six test cases, with six passed and zero failed. These results represent the recorded functional and smoke tests; they do not claim exhaustive testing of every possible scenario.
 
@@ -268,8 +284,29 @@ voting-app/
 ├── docker-compose.yml
 └── README.md
 ```
+### Subsequent Deployment and Recovery Status
 
 The exact contents may evolve as the project develops. The evidence files are snapshots captured during troubleshooting, not a replacement for checking the live cluster.
+=======
+After the earlier rollback and recovery work, I continued updating the application and its Helm configuration.
+
+The latest recorded Helm history shows:
+
+| Revision | Status | Description |
+|---|---|---|
+| 1 | Superseded | Original installation |
+| 2 | Superseded | Earlier successful upgrade |
+| 3 | Failed | Upgrade timed out |
+| 4 | Superseded | Rollback to revision 2 |
+| 5 | Deployed | Latest successful upgrade |
+
+Revision 5 uses the same Git commit SHA tag for the Vote, Result, and Worker images. The Vote container and Service target port are both configured for port 8080.
+
+The latest observed state had all five application pods reporting `1/1 Running`, and the end-to-end voting test succeeded.
+
+**Important:** The earlier recovery to revision 2 and the later deployment at revision 5 are separate events. The current revision 5 deployment is the one verified by the latest testing.
+### Lessons learned
+e41ef0011e798c3305361d5e2304e2600e9ea2ff
 
 ## Demonstration
 
@@ -300,6 +337,32 @@ Docker packages applications and their dependencies into containers, helping ser
 Kubernetes manages containerized workloads, maintains the desired number of replicas, and supports service discovery, deployment updates, and recovery when containers fail.
 
 ### 5. Why did you use Kind instead of a cloud Kubernetes cluster?
+=======
+- [x] GitHub Actions build-and-scan workflow reported successful.
+- [x] GHCR publishing reported successful.
+- [x] Local Kind node reported `Ready`.
+- [x] Five application pods returned to `1/1 Ready` after recovery.
+- [x] Vote and Result endpoints returned HTTP 200 OK.
+- [x] Helm rollback to revision 2 completed successfully.
+- [x] Restored Vote image tag verified.
+- [x] Full end-to-end voting and result-update test recorded.
+- [x] Failed revision's missing `gunicorn` issue corrected and retested.
+- [x] Final architecture diagram and README committed to GitHub.
+## Additional Deployment Evidence
+
+- [x] Helm history captured before a further rollback attempt.
+- [x] Deployed image versions captured before a further rollback attempt.
+- [x] Current Helm release confirmed as revision 5, with status `deployed`.
+- [x] End-to-end vote submission and result update verified.
+
+Evidence files:
+
+- `docs/evidence/helm-history-before-rollback.txt`
+- `docs/evidence/images-before-rollback.txt`
+
+These files record the release history and deployed image versions at the time they were captured. They should not be treated as a live view of the cluster.
+The unchecked items are remaining work, not claims of completed testing.
+>>>>>>> e41ef0011e798c3305361d5e2304e2600e9ea2ff
 
 Kind runs Kubernetes nodes in Docker containers. It allowed me to practice Kubernetes deployment locally without requiring a paid cloud environment for this capstone.
 
